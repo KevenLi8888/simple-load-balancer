@@ -1,0 +1,22 @@
+lb:
+  host: 0.0.0.0
+  port: 8080
+  timeout: 30
+
+api:
+  host: 0.0.0.0
+  port: 8081
+
+mongodb:
+  host: somehost.mongodb.net
+  name: mydatabase
+  username: myuser
+  password: mypassword
+
+logging:
+  level: INFO
+  file: logs/load_balancer.log
+
+metrics:
+  enabled: false
+  port: 9090
