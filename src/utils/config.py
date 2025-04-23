@@ -1,7 +1,9 @@
 import yaml
+import logging
 from typing import Dict, Any
 
 CONFIG: Dict[str, Any] = {}
+logger = logging.getLogger(__name__)
 
 def load_config(path: str = 'config.yaml') -> None:
     """Loads configuration from a YAML file."""
@@ -10,11 +12,11 @@ def load_config(path: str = 'config.yaml') -> None:
         with open(path, 'r') as f:
             CONFIG = yaml.safe_load(f)
     except FileNotFoundError:
-        print(f"Error: Configuration file '{path}' not found.")
+        logger.error(f"Configuration file '{path}' not found.")
         # Potentially load default config or exit
         CONFIG = {} # Initialize with empty dict or defaults
     except yaml.YAMLError as e:
-        print(f"Error parsing configuration file '{path}': {e}")
+        logger.error(f"Error parsing configuration file '{path}': {e}")
         CONFIG = {}
 
 def get_config() -> Dict[str, Any]:

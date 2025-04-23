@@ -1,3 +1,4 @@
+import logging
 from flask import Flask, request, jsonify, Blueprint
 from src.db import collections as db
 from src.db.models import Service, Algorithm
@@ -7,6 +8,7 @@ from typing import Dict, Any
 
 # Using Blueprint for modularity
 service_bp = Blueprint('service_api', __name__, url_prefix='/services')
+logger = logging.getLogger(__name__)  # Instantiate logger
 
 @service_bp.route('/', methods=['POST'])
 def create_service():
@@ -35,10 +37,10 @@ def create_service():
     except ValidationError as e:
         return jsonify({"error": e.errors()}), 400
     except (ConnectionError, RuntimeError) as e:
-        print(f"Error creating service (DB issue): {e}") # Basic logging
+        logger.error(f"Error creating service (DB issue): {e}")  # Use logger
         return jsonify({"error": "Database operation failed"}), 500
     except Exception as e:
-        print(f"Error creating service: {e}") # Basic logging
+        logger.error(f"Error creating service: {e}")  # Use logger
         return jsonify({"error": "An unexpected error occurred"}), 500
 
 @service_bp.route('/', methods=['GET'])
@@ -51,7 +53,7 @@ def get_services():
         return jsonify([service.model_dump() for service in services]), 200
     except Exception as e:
         # Log the exception e
-        print(f"Error getting services: {e}") # Basic logging
+        logger.error(f"Error getting services: {e}")  # Use logger
         return jsonify({"error": "An unexpected error occurred"}), 500
 
 @service_bp.route('/<string:service_id>', methods=['GET'])
@@ -64,10 +66,10 @@ def get_service(service_id: str):
         else:
             return jsonify({"error": "Service not found"}), 404
     except (ConnectionError, RuntimeError) as e:
-        print(f"Error getting service {service_id} (DB issue): {e}")
+        logger.error(f"Error getting service {service_id} (DB issue): {e}")  # Use logger
         return jsonify({"error": "Database operation failed"}), 500
     except Exception as e:
-        print(f"Error getting service {service_id}: {e}") # Basic logging
+        logger.error(f"Error getting service {service_id}: {e}")  # Use logger
         return jsonify({"error": "An unexpected error occurred"}), 500
 
 @service_bp.route('/header/<string:header>', methods=['GET'])
@@ -80,10 +82,10 @@ def get_service_by_hdr(header: str):
         else:
             return jsonify({"error": "Service not found for this header"}), 404
     except (ConnectionError, RuntimeError) as e:
-        print(f"Error getting service by header {header} (DB issue): {e}")
+        logger.error(f"Error getting service by header {header} (DB issue): {e}")  # Use logger
         return jsonify({"error": "Database operation failed"}), 500
     except Exception as e:
-        print(f"Error getting service by header {header}: {e}") # Basic logging
+        logger.error(f"Error getting service by header {header}: {e}")  # Use logger
         return jsonify({"error": "An unexpected error occurred"}), 500
 
 @service_bp.route('/<string:service_id>', methods=['PUT'])
@@ -127,13 +129,13 @@ def update_service_endpoint(service_id: str):
         else:
             field = "field"
         return jsonify({"error": f"Another service already has this {field}"}), 409
-    except ValueError as e: # Raised by db.update_service if service_id not found
-        return jsonify({"error": str(e)}), 404 # Not Found
+    except ValueError as e:  # Raised by db.update_service if service_id not found
+        return jsonify({"error": str(e)}), 404  # Not Found
     except (ConnectionError, RuntimeError) as e:
-        print(f"Error updating service {service_id} (DB issue): {e}")
+        logger.error(f"Error updating service {service_id} (DB issue): {e}")  # Use logger
         return jsonify({"error": "Database operation failed"}), 500
     except Exception as e:
-        print(f"Error updating service {service_id}: {e}") # Basic logging
+        logger.error(f"Error updating service {service_id}: {e}")  # Use logger
         return jsonify({"error": "An unexpected error occurred"}), 500
 
 @service_bp.route('/<string:service_id>', methods=['DELETE'])
@@ -148,13 +150,13 @@ def delete_service_endpoint(service_id: str):
         # The db.delete_service function handles deleting associated instances
         success = db.delete_service(service_id)
         if success:
-            return jsonify({"message": "Service and associated instances deleted successfully"}), 200 # 204 No Content is also valid
+            return jsonify({"message": "Service and associated instances deleted successfully"}), 200  # 204 No Content is also valid
         else:
             # If delete_service returns False, it likely means the service wasn't found
             return jsonify({"error": "Service not found"}), 404
     except (ConnectionError, RuntimeError) as e:
-        print(f"Error deleting service {service_id} (DB issue): {e}")
+        logger.error(f"Error deleting service {service_id} (DB issue): {e}")  # Use logger
         return jsonify({"error": "Database operation failed"}), 500
     except Exception as e:
-        print(f"Error deleting service {service_id}: {e}") # Basic logging
+        logger.error(f"Error deleting service {service_id}: {e}")  # Use logger
         return jsonify({"error": "An unexpected error occurred"}), 500
