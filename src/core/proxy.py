@@ -37,10 +37,11 @@ class ProxyHandler:
                 status=response.status_code,
                 headers=response_headers
             )
-            
+
         except requests.RequestException as e:
             self.logger.error(f"Error forwarding request to {url}: {str(e)}")
-            return Response(f"Error forwarding request: {str(e)}", status=502)
+            # Re-raise the exception to be handled by the caller (LoadBalancer)
+            raise e
 
     def _prepare_headers(self, client_headers: Dict[str, str], instance: Instance) -> Dict[str, str]:
         """Prepare headers for the backend request."""

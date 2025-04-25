@@ -4,6 +4,7 @@ from typing import Optional, List
 from src.algorithms.algorithm_factory import AlgorithmFactory
 from src.db.models import Service, Instance, Algorithm, InstanceStatus
 from src.core.proxy import ProxyHandler
+from src.core.stickey_session import StickySessionManager
 from src.db import collections as db
 from src.utils.config import get_config
 import copy
@@ -13,6 +14,7 @@ class LoadBalancer:
         self.logger = logging.getLogger(__name__)
         config = get_config().get('lb', {})
         self.proxy = ProxyHandler(timeout=config.get('timeout', 30))
+        self.sticky_sessions = StickySessionManager()
 
     def route_request(self, client_request: Request, path: str) -> Response:
         """Route an incoming request to an appropriate backend instance."""
@@ -32,7 +34,7 @@ class LoadBalancer:
             if not instances:
                 return Response("No healthy instances available", status=503)
 
-            # Get client IP for potential sticky session
+            # Get client IP for potential sticky session or algorithm
             client_ip = self._get_client_ip(client_request)
 
             # Attempt to route the request with retry logic
@@ -48,22 +50,34 @@ class LoadBalancer:
         # Make a copy of instances so we can remove failed ones
         available_instances = copy.copy(instances)
         tried_instances = set()
+        last_error = None
         
         while available_instances:
-            # Select instance using the appropriate algorithm
+            # Select instance using sticky session or load balancing algorithm
+            instance = self._select_instance(service, available_instances, client_ip)
+            if not instance or instance.id in tried_instances:
+                # No new instance to try
+                break
+                
+            tried_instances.add(instance.id)
+            
+            # Forward the request
             try:
-                instance = self._select_instance(service, available_instances, client_ip)
-                if not instance or instance.id in tried_instances:
-                    # No new instance to try
-                    break
+                response = self.proxy.forward_request(client_request, instance, path)
+                
+                # If the request was successful and sticky sessions are enabled,
+                # update the sticky session mapping
+                if service.stateful and response.status_code < 500:
+                    self.sticky_sessions.set_sticky_instance(client_ip, service.id, instance.id)
                     
-                tried_instances.add(instance.id)
-                
-                # Forward the request
-                return self.proxy.forward_request(client_request, instance, path)
-                
+                return response
             except Exception as e:
+                last_error = e
                 self.logger.warning(f"Request to instance {instance.id} failed: {str(e)}")
+                
+                # If sticky sessions are enabled, remove the mapping on failure
+                if service.stateful:
+                    self.sticky_sessions.remove_sticky_instance(client_ip, service.id)
                 
                 # Mark the instance as unhealthy
                 try:
@@ -81,7 +95,8 @@ class LoadBalancer:
                 else:
                     self.logger.error("No more instances available for retry")
         
-        return Response("All instances failed to process the request", status=503)
+        error_msg = f"All instances failed to process the request: {str(last_error)}" if last_error else "All instances failed to process the request"
+        return Response(error_msg, status=503)
 
     def _get_healthy_instances(self, service_id: str) -> List[Instance]:
         """Get all healthy instances for a service."""
@@ -98,8 +113,20 @@ class LoadBalancer:
         )
 
     def _select_instance(self, service: Service, instances: List[Instance], client_ip: str) -> Optional[Instance]:
-        """Select an instance using the service's configured algorithm."""
+        """Select an instance using sticky session or the service's configured algorithm."""
         try:
+            # First check for sticky session if enabled
+            if service.stateful:
+                sticky_instance_id = self.sticky_sessions.get_sticky_instance(client_ip, service.id)
+                if sticky_instance_id:
+                    # Find the sticky instance in our available instances
+                    for instance in instances:
+                        if instance.id == sticky_instance_id:
+                            return instance
+                    # If we get here, the sticky instance is no longer available
+                    self.sticky_sessions.remove_sticky_instance(client_ip, service.id)
+
+            # Fall back to regular load balancing algorithm
             algorithm = AlgorithmFactory.get_algorithm(
                 service.algorithm,
                 instances,
