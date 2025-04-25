@@ -7,7 +7,7 @@ class LeastConnectionAlgorithm(LoadBalancingAlgorithm):
     _connections: Dict[str, int] = {}  # instance_id -> connection count
     _lock = threading.Lock()  # Thread safety for connection counts
 
-    def __init__(self, instances: List[Instance], client_ip: str = None):
+    def __init__(self, instances: List[Instance], client_ip: str):
         super().__init__(instances, client_ip)
         # Initialize connection counts for new instances
         with self._lock:

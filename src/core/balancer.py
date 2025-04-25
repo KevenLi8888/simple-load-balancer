@@ -103,7 +103,7 @@ class LoadBalancer:
             algorithm = AlgorithmFactory.get_algorithm(
                 service.algorithm,
                 instances,
-                client_ip if service.stateful else ""
+                client_ip
             )
             return algorithm.select_instance()
         except Exception as e:
