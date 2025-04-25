@@ -1,4 +1,5 @@
 import http.server
+from re import S
 import socketserver
 import json
 import argparse
@@ -15,6 +16,8 @@ import time
 DEFAULT_PORT = 28000
 SERVICE_NAME = "demo-service"
 SERVICE_HEADER = "demo-service"
+STATEFUL = False
+ALGORITHM = "round_robin"
 SERVICE_REGISTRY_ADDR = "http://localhost:18081"
 
 # Global variables for RPS calculation
@@ -22,6 +25,11 @@ request_timestamps = collections.deque()
 rps_lock = threading.Lock()
 RPS_WINDOW_SECONDS = 5 # Calculate RPS over the last 10 seconds
 RPS_UPDATE_INTERVAL = 2 # Update RPS every 2 seconds
+
+class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    """Allow reuse of addresses and larger request queue."""
+    allow_reuse_address = True
+    request_queue_size = 128 # Increase backlog queue size
 
 class DemoHTTPHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, port=None, **kwargs):
@@ -57,7 +65,25 @@ def register_with_load_balancer(port):
         response = requests.get(service_lookup_url)
         if response.status_code == 200:
             service_id = response.json()['id']
-            print(f"Found existing service '{SERVICE_NAME}' with ID: {service_id}")
+            print(f"Found existing service '{SERVICE_NAME}' with ID: {service_id}. Attempting to update.")
+            # --- Start of added code ---
+            try:
+                update_payload = {
+                    'name': SERVICE_NAME,
+                    'header': SERVICE_HEADER,
+                    'stateful': STATEFUL,
+                    'algorithm': ALGORITHM,
+                }
+                update_url = f"{SERVICE_REGISTRY_ADDR}/services/{service_id}"
+                update_response = requests.put(update_url, json=update_payload)
+                update_response.raise_for_status() # Check for HTTP errors during update
+                print(f"Successfully updated service '{SERVICE_NAME}' (ID: {service_id}).")
+            except requests.exceptions.RequestException as e:
+                print(f"Warning: Failed to update existing service {service_id}: {e}")
+                # Decide if this is critical. For now, we'll proceed with instance registration.
+            except Exception as e:
+                 print(f"An unexpected error occurred during service update: {e}")
+            # --- End of added code ---
         elif response.status_code == 404:
             print(f"Service with header '{SERVICE_HEADER}' not found. Attempting to create.")
         else:
@@ -79,8 +105,8 @@ def register_with_load_balancer(port):
             service_payload = {
                 'name': SERVICE_NAME,
                 'header': SERVICE_HEADER,
-                'stateful': False # Assuming stateless for demo
-                # 'algorithm': 'round_robin' # Optional: specify algorithm if needed
+                'stateful': STATEFUL,
+                'algorithm': ALGORITHM,
             }
             service_create_url = f"{SERVICE_REGISTRY_ADDR}/services"
             service_response = requests.post(service_create_url, json=service_payload)
@@ -167,7 +193,8 @@ def run_server(port):
     rps_thread = threading.Thread(target=calculate_and_print_rps, args=(stop_event,), daemon=True)
     rps_thread.start()
 
-    with socketserver.TCPServer(("", port), Handler) as httpd:
+    # Use the custom ThreadingTCPServer
+    with ThreadingTCPServer(("", port), Handler) as httpd:
         print(f"Server running on port {port}")
         
         # Register with load balancer
@@ -175,6 +202,8 @@ def run_server(port):
         
         try:
             httpd.serve_forever()
+        except Exception as e:
+            print(f"Server encountered an error: {e}") # Add general error catching
         except KeyboardInterrupt:
             print("\nShutting down server...")
         finally:

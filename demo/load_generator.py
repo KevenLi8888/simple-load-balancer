@@ -20,39 +20,75 @@ class LoadGenerator:
         self.results = []
         self.lock = threading.Lock()
         self.completed = 0
+        self.stop_requested = threading.Event()  # Add a stop event
     
     def worker(self):
         headers = {'Host': self.host_header}
         
-        while True:
+        while not self.stop_requested.is_set():  # Check the stop event
+            # Check stop event again before potentially blocking operations
+            if self.stop_requested.is_set():
+                break
+
             with self.lock:
                 if self.completed >= self.total_requests:
                     break
                 self.completed += 1
                 current = self.completed
             
+            # Check stop event before making the network request
+            if self.stop_requested.is_set():
+                break
+
             start_time = time.time()
             try:
                 response = requests.get(f"{self.url}/test?id={current}", headers=headers)
                 status_code = response.status_code
                 server_info = response.json() if response.status_code == 200 else None
+
+                if status_code != 200:
+                    print(f"\nReceived status code {status_code}. Stopping load generator.")
+                    self.stop_requested.set()  # Signal other threads to stop
+                    # Optionally record the error before breaking
+                    with self.lock:
+                        self.results.append({
+                            'request_id': current,
+                            'status_code': status_code,
+                            'duration': time.time() - start_time,
+                            'server_info': f"Stopped due to status {status_code}"
+                        })
+                    break  # Stop this worker immediately
+
             except Exception as e:
                 status_code = 0
                 server_info = str(e)
+                print(f"\nRequest failed: {e}. Stopping load generator.")
+                self.stop_requested.set()  # Signal other threads to stop
+                # Optionally record the error before breaking
+                with self.lock:
+                    self.results.append({
+                        'request_id': current,
+                        'status_code': status_code,
+                        'duration': time.time() - start_time,
+                        'server_info': f"Stopped due to exception: {e}"
+                    })
+                break  # Stop this worker immediately
             
             duration = time.time() - start_time
             
             with self.lock:
-                self.results.append({
-                    'request_id': current,
-                    'status_code': status_code,
-                    'duration': duration,
-                    'server_info': server_info
-                })
-                
-                # Progress update
-                if current % 10 == 0 or current == self.total_requests:
-                    print(f"Completed {current}/{self.total_requests} requests")
+                # Only append successful results if not stopped
+                if not self.stop_requested.is_set():
+                    self.results.append({
+                        'request_id': current,
+                        'status_code': status_code,
+                        'duration': duration,
+                        'server_info': server_info
+                    })
+                    
+                    # Progress update only if not stopping
+                    if current % 10 == 0 or current == self.total_requests:
+                        print(f"Completed {current}/{self.total_requests} requests")
     
     def run(self):
         print(f"Starting load test with {self.concurrency} concurrent clients")
@@ -66,10 +102,26 @@ class LoadGenerator:
             t.start()
             threads.append(t)
         
-        for t in threads:
-            t.join()
+        try:
+            # Wait for threads with a timeout to allow interrupt handling
+            for t in threads:
+                while t.is_alive():
+                    t.join(timeout=0.1) # Check every 100ms
+        except KeyboardInterrupt:
+            print("\nCtrl+C detected. Signaling workers to stop...")
+            self.stop_requested.set()
+            # Wait briefly for threads to acknowledge the stop signal
+            for t in threads:
+                t.join(timeout=1.0) # Give threads a second to exit cleanly
         
         total_time = time.time() - start_time
+        
+        if self.stop_requested.is_set() and not any(r['status_code'] != 200 and r['status_code'] != 0 for r in self.results):
+             print("\nLoad test interrupted by user.")
+        elif self.stop_requested.is_set():
+            print("\nLoad test stopped prematurely due to errors or interruption.")
+        else:
+            print("\nLoad test completed.")
         
         self.print_results(total_time)
     
@@ -93,12 +145,20 @@ class LoadGenerator:
         print(f"  Avg: {sum(durations)/len(durations):.4f}")
         
         # Server distribution (load balancing check)
-        if all(r['status_code'] == 200 for r in self.results):
-            server_ports = [r['server_info']['server_port'] for r in self.results]
-            port_counts = Counter(server_ports)
-            print("\nServer Distribution:")
-            for port, count in port_counts.items():
-                print(f"  Server on port {port}: {count} ({count/len(self.results)*100:.1f}%)")
+        # Filter out results that might not have server_info if stopped early
+        successful_results = [r for r in self.results if r['status_code'] == 200 and r.get('server_info')]
+        if successful_results:
+            server_ports = [r['server_info']['server_port'] for r in successful_results]
+            if server_ports:  # Check if there are any successful results with server ports
+                port_counts = Counter(server_ports)
+                print("\nServer Distribution (for successful requests):")
+                total_successful = len(successful_results)
+                for port, count in port_counts.items():
+                    print(f"  Server on port {port}: {count} ({count/total_successful*100:.1f}%)")
+            else:
+                print("\nNo successful requests with server info to analyze distribution.")
+        else:
+            print("\nNo successful requests to analyze server distribution.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Load Generator for Demo Load Balancer')
