@@ -7,6 +7,7 @@ class Algorithm(str, Enum):
     ROUND_ROBIN = "round_robin"
     IP_HASH = "ip_hash"
     LEAST_CONNECTION = "least_connection"
+    WEIGHTED_ROUND_ROBIN = "weighted_round_robin"
 
 class InstanceStatus(str, Enum):
     HEALTHY = "healthy"

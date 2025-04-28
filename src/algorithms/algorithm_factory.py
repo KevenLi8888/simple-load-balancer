@@ -3,13 +3,15 @@ from src.algorithms import LoadBalancingAlgorithm
 from src.algorithms.round_robin import RoundRobinAlgorithm
 from src.algorithms.ip_hash import IpHashAlgorithm
 from src.algorithms.least_connection import LeastConnectionAlgorithm
+from src.algorithms.weighted_round_robin import WeightedRoundRobinAlgorithm
 from src.db.models import Instance, Algorithm
 
 class AlgorithmFactory:
     _algorithms: Dict[Algorithm, Type[LoadBalancingAlgorithm]] = {
         Algorithm.ROUND_ROBIN: RoundRobinAlgorithm,
         Algorithm.IP_HASH: IpHashAlgorithm,
-        Algorithm.LEAST_CONNECTION: LeastConnectionAlgorithm
+        Algorithm.LEAST_CONNECTION: LeastConnectionAlgorithm,
+        Algorithm.WEIGHTED_ROUND_ROBIN: WeightedRoundRobinAlgorithm
     }
     
     @classmethod

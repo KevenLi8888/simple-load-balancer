@@ -17,8 +17,14 @@ DEFAULT_PORT = 28000
 SERVICE_NAME = "demo-service"
 SERVICE_HEADER = "demo-service"
 STATEFUL = False
-ALGORITHM = "round_robin"
+# ALGORITHM = "round_robin"
+ALGORITHM = "ip_hash"
+# ALGORITHM = "resource_based"
+# ALGORITHM = "weighted_round_robin"
 SERVICE_REGISTRY_ADDR = "http://localhost:18081"
+
+DEFAULT_SLEEP_TIME = 0.5
+DEFAULT_MAX_CONCURRENT_REQUESTS = 3
 
 # Global variables for RPS calculation
 request_timestamps = collections.deque()
@@ -26,38 +32,43 @@ rps_lock = threading.Lock()
 RPS_WINDOW_SECONDS = 5 # Calculate RPS over the last 10 seconds
 RPS_UPDATE_INTERVAL = 2 # Update RPS every 2 seconds
 
+request_semaphore = None
+
 class ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     """Allow reuse of addresses and larger request queue."""
     allow_reuse_address = True
     request_queue_size = 128 # Increase backlog queue size
 
 class DemoHTTPHandler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *args, port=None, **kwargs):
+    def __init__(self, *args, port=None, sleep_time=DEFAULT_SLEEP_TIME, **kwargs):
         self.port = port
+        self.sleep_time = sleep_time
         super().__init__(*args, **kwargs)
         
     def do_GET(self):
-        # Record timestamp for RPS calculation
-        with rps_lock:
-            request_timestamps.append(time.time())
+        with request_semaphore:
+            with rps_lock:
+                request_timestamps.append(time.time())
             
-        self.send_response(200)
-        self.send_header('Content-type', 'application/json')
-        self.end_headers()
-        
-        response = {
-            'message': 'Hello from demo server!',
-            'server_port': self.port,
-            'path': self.path
-        }
-        
-        self.wfile.write(json.dumps(response).encode())
+            time.sleep(self.sleep_time) 
+
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            
+            response = {
+                'message': 'Hello from demo server!',
+                'server_port': self.port,
+                'path': self.path,
+            }
+            
+            self.wfile.write(json.dumps(response).encode())
 
     def log_message(self, format, *args):
         """Suppress default logging."""
         pass
 
-def register_with_load_balancer(port):
+def register_with_load_balancer(port, max_concurrent, weight):
     # Try to find the service by header first
     service_id = None
     try:
@@ -136,7 +147,11 @@ def register_with_load_balancer(port):
 
         # API expects 'addr' field in 'host:port' format
         instance_payload = {
-            'addr': f"{ip}:{port}"
+            'addr': f"{ip}:{port}",
+            'metadata': {
+                'max_concurrent': max_concurrent,
+                'weight': weight
+            }
             # 'status': 'healthy' # Optional: Can set initial status if API allows
         }
         instance_create_url = f"{SERVICE_REGISTRY_ADDR}/services/{service_id}/instances"
@@ -185,8 +200,11 @@ def calculate_and_print_rps(stop_event):
             
         print(f"RPS ({RPS_WINDOW_SECONDS}s window): {rps:.2f}")
 
-def run_server(port):
-    Handler = partial(DemoHTTPHandler, port=port)
+def run_server(port, max_concurrent_requests, sleep_time, weight):
+    global request_semaphore
+    request_semaphore = threading.Semaphore(max_concurrent_requests)
+    
+    Handler = partial(DemoHTTPHandler, port=port, sleep_time=sleep_time)
     
     # Start RPS calculation thread
     stop_event = threading.Event()
@@ -198,7 +216,7 @@ def run_server(port):
         print(f"Server running on port {port}")
         
         # Register with load balancer
-        instance_id, service_id = register_with_load_balancer(port)
+        instance_id, service_id = register_with_load_balancer(port, max_concurrent_requests, weight)
         
         try:
             httpd.serve_forever()
@@ -219,6 +237,11 @@ def run_server(port):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Demo HTTP Server')
     parser.add_argument('--port', type=int, default=DEFAULT_PORT, help='Port to run the server on')
+    parser.add_argument('--max-concurrent', type=int, default=DEFAULT_MAX_CONCURRENT_REQUESTS, 
+                        help='Maximum number of concurrent requests')
+    parser.add_argument('--sleep-time', type=float, default=DEFAULT_SLEEP_TIME, 
+                        help='Sleep time in seconds for each request')
+    parser.add_argument('--weight', type=int, default=1, help='Weight for the instance')
     args = parser.parse_args()
     
-    run_server(args.port)
+    run_server(args.port, args.max_concurrent, args.sleep_time, args.weight)

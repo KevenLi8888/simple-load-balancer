@@ -21,9 +21,38 @@ class LoadGenerator:
         self.lock = threading.Lock()
         self.completed = 0
         self.stop_requested = threading.Event()  # Add a stop event
+        self.use_random_ip = False
+        self.use_fixed_ips = False  # Flag to use a fixed set of IPs
+        self.num_fixed_ips = 0      # Number of fixed IPs to use
+        self.fixed_ips = []         # List to store the fixed IPs
+        self.c_completed = 0
+        self.request_interval = 0.5
+
+    def generate_random_ip(self):
+        """generate a random IPv4 address"""
+        return f"{random.randint(1, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}"
+    
+    def generate_fixed_ips(self, count):
+        """Generate a fixed set of random IP addresses
+        
+        Args:
+            count: Number of IP addresses to generate
+        
+        Returns:
+            List of IP addresses
+        """
+        return [self.generate_random_ip() for _ in range(count)]
     
     def worker(self):
         headers = {'Host': self.host_header}
+        
+        if self.use_random_ip:
+            headers['X-Forwarded-For'] = self.generate_random_ip()
+        elif self.use_fixed_ips and self.fixed_ips:
+            # Select an IP from the fixed set based on thread ID
+            thread_id = threading.get_ident()
+            ip_index = hash(thread_id) % len(self.fixed_ips)
+            headers['X-Forwarded-For'] = self.fixed_ips[ip_index]
         
         while not self.stop_requested.is_set():  # Check the stop event
             # Check stop event again before potentially blocking operations
@@ -35,6 +64,10 @@ class LoadGenerator:
                     break
                 self.completed += 1
                 current = self.completed
+            
+
+            if self.request_interval > 0:
+                time.sleep(self.request_interval)
             
             # Check stop event before making the network request
             if self.stop_requested.is_set():
@@ -85,10 +118,12 @@ class LoadGenerator:
                         'duration': duration,
                         'server_info': server_info
                     })
+
+                    self.c_completed += 1
                     
                     # Progress update only if not stopping
-                    if current % 10 == 0 or current == self.total_requests:
-                        print(f"Completed {current}/{self.total_requests} requests")
+                    # if self.c_completed % 10 == 0 or self.c_completed == self.total_requests:
+                    print(f"Completed {self.c_completed}/{self.total_requests} requests")
     
     def run(self):
         print(f"Starting load test with {self.concurrency} concurrent clients")
@@ -166,7 +201,28 @@ if __name__ == "__main__":
     parser.add_argument('--host', default=DEFAULT_HOST_HEADER, help='Host header for the request')
     parser.add_argument('--concurrency', type=int, default=DEFAULT_CONCURRENCY, help='Number of concurrent clients')
     parser.add_argument('--requests', type=int, default=DEFAULT_REQUESTS, help='Total number of requests')
+    parser.add_argument('--random-ip', action='store_true', help='Use random IP addresses in X-Forwarded-For header')
+    parser.add_argument('--fixed-ips', type=int, default=0, help='Use a fixed set of N random IP addresses')
+    parser.add_argument('--interval', type=float, default=0, help='Time interval between requests (in seconds)')
     args = parser.parse_args()
     
     generator = LoadGenerator(args.url, args.host, args.concurrency, args.requests)
+    
+    # Handle IP configuration
+    if args.random_ip and args.fixed_ips:
+        print("Warning: Both --random-ip and --fixed-ips specified. Using fixed IPs.")
+        args.random_ip = False
+    
+    generator.use_random_ip = args.random_ip
+    
+    if args.fixed_ips > 0:
+        generator.use_fixed_ips = True
+        generator.num_fixed_ips = args.fixed_ips
+        generator.fixed_ips = generator.generate_fixed_ips(args.fixed_ips)
+        print(f"Using {args.fixed_ips} fixed IP addresses for testing")
+    
+    generator.request_interval = args.interval
+    if args.interval > 0:
+        print(f"Using random delay up to {args.interval} seconds between requests")
+    
     generator.run()
