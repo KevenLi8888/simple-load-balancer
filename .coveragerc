@@ -1,0 +1,21 @@
+[run]
+source = src
+omit = 
+    src/api/api.py
+    src/main.py
+    src/db/*
+    src/utils/config.py
+    src/algorithms/least_connection.py
+    src/algorithms/weighted_round_robin.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self.debug:
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    pass
+    raise ImportError
+    except ImportError
+    def __str__ 
