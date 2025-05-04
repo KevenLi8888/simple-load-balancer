@@ -1,5 +1,9 @@
 # simple-load-balancer
 
+# Engineering Notebook
+
+https://kevenli.notion.site/Engineering-Notebook-Load-Balancer-1c8b05d7d0e280f2a399c912cd5785c4
+
 # Project Goal and System Design
 
 The primary goal is to design and implement a functional load balancer with Python that embodies core distributed systems concepts and supports the following features:
